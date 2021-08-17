@@ -71,7 +71,7 @@ def DD_distribute():
             sum_i = pair[1] - 1
             if sum_i >= 1:
                 for j in range(len(J)):
-                    if pair[0] != j and J[pair[0]][j] != 0:
+                    if pair[0] != j and J[pair[0]][j] != 0 and used[j] == 0:
                         cur_nodes_bag.append(j)
                         nts[j] = S_counter
                         used[j] = 1
@@ -160,7 +160,7 @@ def vec_GBP(num_it = 200):
 def sample_run():
     
     global J, h, P_marg, mu_marg
-    generate_model(n = 30, r = 0.3, hords = 10, step = 1)
+    generate_model(n = 30, r = 0.31, hords = 20, step = 1)
     DD_distribute()
     build_SG()
     n = len(J)
