@@ -1,0 +1,249 @@
+import sys
+import numpy as np
+from sympy.tensor.array import Array
+from scipy.optimize import minimize
+from sympy import symbols
+from sympy import lambdify
+from sympy import Matrix
+from numpy.linalg import inv
+from numpy.random import rand
+import matplotlib.pyplot as plt
+from numpy.linalg import eigvals
+from numpy.linalg import norm
+from numpy import transpose as T
+from matplotlib.pyplot import savefig
+from numpy import linalg as LA
+from numpy.linalg import eigvalsh
+from numpy.linalg import matrix_power
+from numpy.linalg import norm
+from scipy.linalg import solve
+from copy import deepcopy as copy
+import itertools
+
+
+
+
+J = np.array([[]])
+h = np.array([])
+P_marg = np.array([[]])
+mu_marg = np.array([])
+ans_ground_truth = np.array([])
+C_weights = np.array([])
+nts = dict()
+stn = dict()
+SG = dict()
+
+J_hat_vec = dict()
+h_hat_vec = dict()
+J_delta_vec = dict()
+h_delta_vec = dict()
+J_hat_vec_converged = np.array([[]])
+J_delta_vec_converged = np.array([[]])
+
+
+def generate_model(n, r, hords, step = 1):
+    
+    global J, h, C_weights
+    
+    J = np.eye(n)
+    for i in range(n):
+        J[i][(i+step)%n] = r
+        J[(i+step)%n][i] = r
+        
+    for _ in range(hords):
+        nodes = np.random.choice(n, 2, False)
+        J[nodes[0]][nodes[1]] = r
+        J[nodes[1]][nodes[0]] = r
+        
+    h = np.ones((n))
+    J = np.array(J)
+    
+    
+def init_C_weights_neg():
+    
+    global SG, C_weights, stn
+    C_weights = dict()
+    for i in range(len(SG)):
+        C_weights[i] = dict()
+        for j in range(len(SG)):
+                
+            C_weights[i][j] = -2*(len(SG) + 1) * np.dot(np.dot(J[np.ix_(stn[j], stn[i])],\
+                                        np.linalg.inv(J[np.ix_(stn[i], stn[i])])),\
+                                        J[np.ix_(stn[i], stn[j])])                                
+            
+    print("C")
+    print(C_weights)
+            
+
+def init_C_weights_ones():
+    
+    global SG, C_weights
+    C_weights = dict()
+    for i in range(len(SG)):
+        C_weights[i] = dict()
+        for j in range(len(SG)):
+
+            C_weights[i][j] = 1.0     
+    
+    
+def DD_distribute():
+    
+    global nts, stn, SG, J
+    used = np.zeros((len(J)))
+    weights_pairs = sorted(list(zip(range(len(J)), np.sum(J, axis = 1))), key = lambda x: x[1], reverse = True)
+    print(weights_pairs)
+    S_counter = 0
+    
+    for pair in weights_pairs:
+        if used[pair[0]] == 0:
+            used[pair[0]] = 1
+            cur_nodes_bag = [pair[0]]
+            nts[pair[0]] = S_counter
+            sum_i = pair[1] - 1
+            if sum_i >= 1:
+                for j in range(len(J)):
+                    if pair[0] != j and J[pair[0]][j] != 0 and used[j] == 0:
+                        cur_nodes_bag.append(j)
+                        nts[j] = S_counter
+                        used[j] = 1
+            stn[S_counter] = cur_nodes_bag
+            S_counter += 1
+    
+    for i in range(S_counter):
+        SG[i] = []
+        
+        
+def scalar_distribute():
+    
+    global nts, stn, SG, J
+    for i in range(len(J)):
+        nts[i] = i
+        stn[i] = [i]
+        SG[i] = []
+
+            
+            
+def build_SG():
+    
+    global nts, stn, SG, J, J_hat_vec, h_hat_vec, J_delta_vec, h_delta_vec
+    
+    for i in range(len(J)):
+        for j in range(len(J)):
+            if i != j:
+                if J[i][j] != 0:
+                    si, sj = nts[i], nts[j]
+                    if si != sj and sj not in SG[si]:
+                        SG[si].append(sj)
+                        
+                        
+    for i in range(len(SG)):
+        J_hat_vec[i] = dict()
+        h_hat_vec[i] = dict()
+        J_delta_vec[i] = dict()
+        h_delta_vec[i] = dict()
+        for j in range(len(SG)):
+            J_hat_vec[i][j] = np.zeros((len(stn[i]), len(stn[i])))
+            h_hat_vec[i][j] = np.zeros((len(stn[i])))
+            J_delta_vec[i][j] = np.zeros((len(stn[j]), len(stn[j])))
+            h_delta_vec[i][j] = np.zeros((len(stn[j])))
+                    
+            
+def GBP_vec_iteration(n_it, alpha = 0.5, conditioner = 0.95):
+    
+    global J_hat_vec, h_hat_vec, J_delta_vec, h_delta_vec, nts, stn, J, h,  C_weights
+    J_delta_vec_copy = copy(J_delta_vec)
+    h_delta_vec_copy = copy(h_delta_vec)
+    
+    for i in range(len(SG)):
+        for j in SG[i]:
+            J_hat_vec[i][j] = copy(J[np.ix_(stn[i], stn[i])]) * (1.0 - pow(conditioner, n_it+1))
+            h_hat_vec[i][j] = copy(h[stn[i]])
+            for k in SG[i]:
+                if k != j:
+                    J_hat_vec[i][j] += J_delta_vec_copy[k][i] * C_weights[k][i] + np.eye(len(stn[i])) * pow(conditioner, n_it+1)
+                    h_hat_vec[i][j] += h_delta_vec_copy[k][i] * C_weights[k][i]
+                else:
+                    J_hat_vec[i][j] += J_delta_vec_copy[k][i] * (C_weights[k][i] - 1.0) + np.eye(len(stn[i])) * pow(conditioner, n_it+1)
+                    h_hat_vec[i][j] += h_delta_vec_copy[k][i] * (C_weights[k][i] - 1.0)
+            
+            J_delta_vec[i][j] = -np.dot(J[np.ix_(stn[j], stn[i])], np.dot(np.linalg.inv(J_hat_vec[i][j]),\
+                                                            J[np.ix_(stn[i], stn[j])])) / (C_weights[i][j]**2) +\
+                                                            np.eye(len(stn[j])) * pow(conditioner, 2*n_it+1)
+            h_delta_vec[i][j] = h_delta_vec[i][j]*(1-alpha) - alpha*np.dot(J[np.ix_(stn[j], stn[i])], np.dot(np.linalg.inv(J_hat_vec[i][j]),\
+                                                             h_hat_vec[i][j])) / (C_weights[i][j])
+    
+    
+def calc_marginals():
+    
+    global J_hat_vec, h_hat_vec, J_delta_vec, h_delta_vec, nts, stn, SG, mu_marg, P_marg, J, h
+    mu_marg = np.zeros((len(J)))
+    P_marg = np.zeros((len(J), len(J)))
+    for i in range(len(SG)):
+        J_vec_marg_i = J[np.ix_(stn[i], stn[i])]
+        h_vec_marg_i = h[stn[i]]
+        for k in SG[i]:
+                J_vec_marg_i += J_delta_vec[k][i]
+                h_vec_marg_i += h_delta_vec[k][i]
+        P_vec_marg_i = np.linalg.inv(J_vec_marg_i)
+        mu_vec_marg_i = np.dot(P_vec_marg_i, h_vec_marg_i)
+        
+        for j in range(len(stn[i])):
+            mu_marg[stn[i][j]] = mu_vec_marg_i[j]
+            for k in range(len(stn[i])):
+                P_marg[stn[i][j]][stn[i][k]] = P_vec_marg_i[j][k]
+                
+                
+def vec_GBP(num_it = 200, print_error = False):
+    
+    global J, h
+    err_list = []
+    
+    for n_it in range(num_it):
+        GBP_vec_iteration(n_it = n_it)
+        if print_error == True:
+            cur_err = calc_error()
+            err_list.append(cur_err)
+        
+    calc_marginals()
+    if print_error == True:
+        fig, ax = plt.subplots()
+        ax.bar(np.arange(len(err_list)), err_list)
+        plt.plot()
+    
+    
+def calc_error():
+    
+    global ans_ground_truth, mu_marg
+    calc_marginals()
+    error = np.linalg.norm(mu_marg - ans_ground_truth)
+    print(error)
+    return error
+    
+    
+def sample_run():
+    
+    global J, h, P_marg, mu_marg, ans_ground_truth
+    generate_model(n = 30, r = 0.36, hords = 20, step = 1)
+    
+    DD_distribute()
+    build_SG()
+    init_C_weights_ones()
+    n = len(J)
+    print(J)
+    R_hat = np.abs(J)
+    for i in range(n):
+        R_hat[i][i] = .0
+    sr = np.max(np.abs(np.linalg.eigvals(R_hat)))
+    print(sr)
+    ans_ground_truth = np.dot(np.linalg.inv(J), h)
+    vec_GBP(num_it = 200, print_error = True)
+    print(ans_ground_truth)
+    print(mu_marg)
+    
+    scalar_distribute()
+    build_SG()
+    init_C_weights_ones()
+    vec_GBP(num_it = 200, print_error = True)
+    print(mu_marg)
+    
+    
