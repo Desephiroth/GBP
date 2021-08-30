@@ -72,7 +72,7 @@ def plot_graph(G, name = "graph"):
     plt.clf()
     
 
-def dfs_cycles(p, u, max_cycle_len = 6):
+def dfs_cycles(p, u, max_cycle_len = 31):
     
     global cycle_color, used_color, stack, parent, cycle_num, G, nts, stn, SG
     
@@ -109,7 +109,7 @@ def dfs_cycles(p, u, max_cycle_len = 6):
     
             
     
-def cycle_supernodes():
+def cycle_supernodes(max_cycle_len = 31):
     
     global cycle_color, used_color, stack, parent, cycle_num, J, G, nts, stn, SG
     
@@ -129,7 +129,7 @@ def cycle_supernodes():
         parent[i] = -1
         nts[i] = i
         
-    dfs_cycles(-1, 0)
+    dfs_cycles(-1, 0, max_cycle_len)
     print(J)
     print(cycle_color)
     
@@ -160,6 +160,7 @@ def generate_model(n, r, hords, step = 1):
     h = np.ones((n))
     J = np.array(J)
     
+
     
 def init_C_weights_neg():
     
@@ -188,7 +189,7 @@ def init_C_weights_ones():
             C_weights[i][j] = 1.0     
     
     
-def DD_distribute(two_levels = True):
+def DD_distribute(two_levels = False):
     
     global nts, stn, SG, J
     used = np.zeros((len(J)))
@@ -340,10 +341,10 @@ def calc_error():
     return error
     
     
-def sample_run(model_num = "plots\\2"):
+def sample_run(model_num = "plots\\11"):
     
     global J, h, P_marg, mu_marg, ans_ground_truth, SG
-    generate_model(n = 20, r = 0.36, hords = 12, step = 1)
+    generate_model(n = 100, r = 0.36, hords = 22, step = 1)
     
     #DD_distribute()
     cycle_supernodes()
@@ -381,6 +382,6 @@ def sample_run(model_num = "plots\\2"):
     scalar_distribute()
     build_SG()
     init_C_weights_ones()
-    vec_GBP(num_it = 200, print_error = True, name = model_num + "1base error")
+    vec_GBP(num_it = 200, print_error = True, name = model_num + "base error")
     print(mu_marg)
     print(sr)
