@@ -1,0 +1,216 @@
+import sys
+import numpy as np
+from sympy.tensor.array import Array
+from scipy.optimize import minimize
+from sympy import symbols
+from sympy import lambdify
+from sympy import Matrix
+from numpy.linalg import inv
+from numpy.random import rand
+import matplotlib.pyplot as plt
+from numpy.linalg import eigvals
+from numpy.linalg import norm
+from numpy import transpose as T
+from matplotlib.pyplot import savefig
+from numpy import linalg as LA
+from numpy.linalg import eigvalsh
+from numpy.linalg import matrix_power
+from numpy.linalg import norm
+from scipy.linalg import solve
+from copy import deepcopy as copy
+import itertools
+import networkx as nx
+from collections import defaultdict
+
+
+G = dict()
+J = np.array([[]])
+h = np.array([])
+P_marg = np.array([[]])
+mu_marg = np.array([])
+ans_ground_truth = np.array([])
+J_delta = dict()
+h_delta = dict()
+diagonal_C = 0.5
+off_diagonal_C = 0.5
+
+
+def reinit():
+    
+    global J_delta, h_delta
+    J_delta = dict()
+    h_delta = dict()
+    
+
+def plot_graph(G, name = "graph"):
+    
+    g = nx.Graph()
+    for u in G.keys():
+        for v in G[u]:
+            g.add_edge(u, v)
+    nx.draw(g)
+    plt.savefig(name)
+    plt.clf()
+    
+            
+def set_G():
+    
+    global J, G
+    
+    n = len(J)
+    G = dict()
+    for i in range(n):
+        G[i] = []
+        for j in range(n):
+            if i != j and J[i][j] != 0:
+                G[i].append(j)
+                
+        
+def generate_model(n, r, hords, step = 1):
+    
+    global J, h, J_delta, h_delta
+    
+    J = np.eye(n)
+    for i in range(n):
+        J[i][(i+step)%n] = r
+        J[(i+step)%n][i] = r
+        
+    for _ in range(hords):
+        nodes = np.random.choice(n, 2, False)
+        J[nodes[0]][nodes[1]] = r
+        J[nodes[1]][nodes[0]] = r
+        
+    h = np.ones((n))
+    J = np.array(J)
+    n = len(J)
+    J_delta = np.zeros((n, n))
+    h_delta = np.zeros((n, n))
+            
+ 
+def GBP_vec_iteration(num_it = 0):
+    
+    global J_delta, h_delta, J, h, G
+    J_delta_copy = copy(J_delta)
+    h_delta_copy = copy(h_delta)
+    
+    for u in G.keys():
+        for v in G[u]:
+            enum = dict()
+            invenum = dict()
+            t = 0
+            enum[u] = t
+            invenum[t] = u
+            t += 1
+            for k in G[u]:
+                if k != v:
+                    enum[k] = t
+                    invenum[t] = k
+                    t += 1
+            A = np.zeros((len(G[u]), len(G[u])))
+            
+            #A_uu
+            A[enum[u]][enum[u]] = J[u][u]
+            for k in G[u]:
+                A[enum[u]][enum[u]] +=  J_delta_copy[k][u] * (-0.5)
+            #A_un
+            for k in G[u]:
+                if k != v:
+                    A[enum[u]][enum[k]] = J[u][k] * (-0.5)
+                    A[enum[k]][enum[u]] = J[k][u] * (-0.5)
+            #A_nn
+            for n in G[u]:
+                if n != v:
+                    A[enum[n]][enum[n]] = J[n][n] 
+                    for l in G[n]:
+                        if l != u:
+                            A[enum[n]][enum[n]] += J_delta_copy[l][n] * (-0.5)
+            
+            A_inv = np.linalg.inv(A)
+            J_delta[u][v] = -(off_diagonal_C**2)*(J[u][v]**2)*A_inv[enum[u]][enum[u]]*(-0.25) #mul by 2?
+            
+            sum1 = .0
+            for k in G[u]:
+                sum1 += h_delta_copy[k][u]
+                
+            h_delta[u][v] = -off_diagonal_C*J[u][v]*A_inv[enum[u]][enum[u]]*(h[u] + sum1)*0.5*2
+            
+            for n in G[u]:
+                if n != v:
+                    sum2 = h[n]
+                    for l in G[n]:
+                        if l != u:
+                            sum2 += h_delta_copy[l][n]
+                    h_delta[u][v] += sum2 * A_inv[enum[u]][enum[n]] * (-off_diagonal_C*J[u][v])
+                    
+    print(num_it, np.linalg.norm(h_delta - h_delta_copy))
+    print(num_it, np.linalg.norm(J_delta - J_delta_copy))
+    
+  
+    
+def calc_marginals():
+    
+    global J_delta, h_delta, J, h, G, P_marg, mu_marg
+    mu_marg = np.zeros((len(J)))
+    P_marg = np.zeros((len(J), len(J)))
+    for i in G.keys():
+        J_marg_i = J[i][i]
+        h_marg_i = h[i]
+        for k in G[i]:
+                J_marg_i += J_delta[k][i]
+                h_marg_i += h_delta[k][i]
+        P_marg_i = (1.0/(J_marg_i))
+        mu_marg[i] = P_marg_i * h_marg_i
+                
+                
+                
+def vec_GBP(num_it = 20, print_error = False, errors_tail = 20, name = "base"):
+    
+    global J, h
+    err_list = []
+    
+    for n_it in range(num_it):
+        GBP_vec_iteration(n_it)
+        if print_error == True:
+            cur_err = calc_error()
+            err_list.append(cur_err)
+        
+    calc_marginals()
+    if print_error == True:
+        err_list = err_list[-errors_tail:]
+        fig, ax = plt.subplots()
+        ax.bar(np.arange(len(err_list)), err_list)
+        plt.plot()
+        plt.savefig(name)
+        plt.clf()
+        
+    
+    
+def calc_error():
+    
+    global ans_ground_truth, mu_marg
+    calc_marginals()
+    error = np.linalg.norm(mu_marg - ans_ground_truth)
+    print(error)
+    return error
+    
+    
+def sample_run(model_num = "plots\\4"):
+    
+    global J, h, P_marg, mu_marg, ans_ground_truth, SG
+    generate_model(n = 50, r = 0.29, hords = 22, step = 1)
+    set_G()
+    plot_graph(G, model_num + "base")
+    n = len(J)
+    print(J)
+    R_hat = np.abs(J)
+    for i in range(n):
+        R_hat[i][i] = .0
+    sr = np.max(np.abs(np.linalg.eigvals(R_hat)))
+    print(sr)
+    ans_ground_truth = np.dot(np.linalg.inv(J), h)
+    vec_GBP(num_it = 20, print_error = True, name = model_num +\
+            "cycle supernodes error")
+    print(ans_ground_truth)
+    print(mu_marg)
+    reinit()
+    
